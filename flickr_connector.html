@@ -1,0 +1,212 @@
+<html>
+<meta http-equiv="Cache-Control" content="no-store" />
+<head>
+<title>Flickr Connector - Hackathlon</title>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js" type="text/javascript"></script>
+<script src="https://public.tableau.com/javascripts/api/tableauwdc-1.1.0.js" type="text/javascript"></script>
+<script src="config.js" type="text/javascript"></script>
+<script type="text/javascript">
+(function() {
+
+  //
+  // Helper functions
+  //
+  function getNewEntry() {
+  	var entry = { 'PhotoId': ""
+		      ,'Title': ""
+		      ,'Views': 0
+		      ,'Favorites': 0
+	};
+	return entry;
+  };
+
+  var flickrUrlBase = "https://api.flickr.com/services/rest/?method=";
+  var flickrUrlKey = "&api_key="+global["FLICKR_KEY"];
+  var flickrUrlLast = "&format=json&nojsoncallback=1";
+
+  function buildUrlImages(user, numimages, page) {
+    var url =  flickrUrlBase + "flickr.people.getPublicPhotos"+flickrUrlKey+"&user_id="+user+"&extras=views"+"&per_page="+numimages+"&page="+page+flickrUrlLast;
+    return url;
+  }
+
+  function buildUrlFindUser(username) {
+    var url = flickrUrlBase + "flickr.people.findByUsername"+flickrUrlKey+"&username="+username+flickrUrlLast;
+    return url;
+  } 
+
+   function buildUrlGetFavorites(image) {
+    var url = flickrUrlBase + "flickr.photos.getFavorites"+flickrUrlKey+"&photo_id="+image+flickrUrlLast;
+    return url;
+  }  
+
+  function findUser(username) {
+       var connectionUrl = buildUrlFindUser(username);
+       var user;
+       var xhr = $.ajax({
+        url: connectionUrl,
+        dataType: 'json',
+	async: false,
+        success: function (data) {
+            if (data.user) {
+              user = data.user.id;
+            } else {
+              tableau.abortWithError("No user found for username: " + username);
+            }
+        },
+        error: function (xhr, ajaxOptions, thrownError) {
+          // add something to the log and return an empty set if there was problem with the connection
+          tableau.log("connection error: " + xhr.responseText + "\n" + thrownError);
+          tableau.abortWithError("error connecting to flickr");
+        }
+     });
+     return user;
+  };
+
+  function getImages(user, numimages) {
+     var imageList = [];
+     var pageNum = numimages / 100 + 1;
+     var imageCounter = 1;
+     var p;
+     for(p = 0; p < pageNum; ++p) {
+     	var connectionUrl = buildUrlImages(user, 100, p+1);
+
+     	// grab images for the user
+     	var xhr = $.ajax({
+        	url: connectionUrl,
+	        dataType: 'json',
+		async: false,
+	        success: function (data) {
+        	    if (data.photos) {
+	              var quotes = data.photos.photo;
+        	      var jj;
+	      	      // mash the data into an array of objects
+        	      for (jj = 0; jj < quotes.length; ++jj) {
+		          var photo = quotes[jj];
+        	       	  var entry = getNewEntry();
+			  entry.PhotoId = photo.id;
+			  entry.Title = photo.title;
+		 	  entry.Views = photo.views;
+        		  imageList.push(entry);
+			  imageCounter++;
+			  if (imageCounter >= numimages) {
+			  	// that is enough
+			  	return;
+			  }
+		      }
+        	    } else {
+	              tableau.abortWithError("No results found for user: " + username);
+        	    }
+	        },
+	        error: function (xhr, ajaxOptions, thrownError) {
+        	  // add something to the log and return an empty set if there was problem with the connection
+	          tableau.log("connection error: " + xhr.responseText + "\n" + thrownError);
+        	  tableau.abortWithError("error connecting to flickr");
+	        }
+	     });
+     }
+     return imageList;
+  };
+
+  function getFavorites(photoId) {
+     var connectionUrl = buildUrlGetFavorites(photoId);
+     var numFavorites = 0;
+     var xhr = $.ajax({
+      	url: connectionUrl,
+        dataType: 'json',
+	async: false,
+        success: function (data) {
+       	    if (data.photo) {
+              numFavorites = data.photo.total;
+            } else {
+	      tableau.log("image data connection error for image " + imageList[i].Image + "\n");
+            }
+	},
+        error: function (xhr, ajaxOptions, thrownError) {
+		// add something to the log
+          	tableau.log("image data connection error: " + xhr.responseText + "\n" + thrownError);
+        }
+     });
+     return numFavorites;
+  };
+
+  //
+  // Connector definition
+  //
+
+  var myConnector = tableau.makeConnector();
+   
+  myConnector.getColumnHeaders = function() {
+    // Tell tableau about the fields and their types
+    var fieldNames = ['PhotoId', 'Title', 'Views', 'Favorites'];
+    var fieldTypes = ['string', 'string', 'int', 'int'];
+    tableau.headersCallback(fieldNames, fieldTypes); // tell tableau about the fields and their type
+  };
+   
+   myConnector.getTableData = function(lastRecordToken) {
+     // Call back to tableau with the table data
+     var connectionData = JSON.parse(tableau.connectionData)
+     var username = connectionData.username;
+     var numimages = connectionData.numpic;
+
+     var user = findUser(username);
+     var imageList = getImages(user, numimages);
+
+     // grab details from the images
+     if (connectionData.favorites) {
+	     var ii;
+	     for (ii = 0; ii < imageList.length; ++ii) {
+		     imageList[ii].Favorites = getFavorites(imageList[ii].PhotoId);
+	     }
+     }
+
+     // Call back to tableau with the table data and the new record number (this is stored as a string)
+     tableau.dataCallback(imageList, imageList.length.toString(), false);
+
+  };
+
+  
+  tableau.registerConnector(myConnector);
+
+  //
+  // Setup connector UI
+  //
+ 
+  $(document).ready(function() {
+    $("#submitButton").click(function() { // This event fires when a button is clicked
+      var username = $('input[name=username]').val().trim();
+      var numpic = $('input[name=numpic]').val().trim();
+      if (numpic < 0) {
+      	numpic = 1;
+      }
+      var favorites = $('input[name=favorites]').prop('checked');
+      if (username) {
+        tableau.connectionData = JSON.stringify({"username": username, "numpic": numpic, "favorites": favorites});  
+    	tableau.connectionName = 'Flickr info: ' + username; 
+        tableau.submit();
+      }
+    });
+  });
+
+})();
+</script>
+</head>
+<body>
+<table>
+<tr>
+	<td>Enter a username:</td>
+	<td><input type="text" name="username" style="width: 150px;" value="melekzek"/></td>
+</tr>
+<tr>
+	<td>Number of pictures:</td> 
+	<td><input type="text" name="numpic" style="width: 150px;" value="50"/><td>
+</tr>
+<tr>
+	<td>Favorites:</td>
+	<td align="left"><input type="checkbox" name="favorites" style="width: 150px;" /></td>
+</tr>
+</table>
+
+<br>
+<button type="button" id="submitButton">Get Image Data</button>
+</body
+</html>
