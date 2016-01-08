@@ -1,7 +1,7 @@
 <html>
 <meta http-equiv="Cache-Control" content="no-store" />
 <head>
-<title>Flickr Connector - Hackathlon</title>
+<title>Flickr Connector - Hackathon</title>
 <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js" type="text/javascript"></script>
 <script src="https://public.tableau.com/javascripts/api/tableauwdc-1.1.0.js" type="text/javascript"></script>
 <script src="config.js" type="text/javascript"></script>
@@ -16,6 +16,7 @@
 		      ,'Title': ""
 		      ,'Views': 0
 		      ,'Favorites': 0
+		      ,'UserId': ""
 	};
 	return entry;
   };
@@ -26,6 +27,11 @@
 
   function buildUrlImages(user, numimages, page) {
     var url =  flickrUrlBase + "flickr.people.getPublicPhotos"+flickrUrlKey+"&user_id="+user+"&extras=views"+"&per_page="+numimages+"&page="+page+flickrUrlLast;
+    return url;
+  }
+
+  function buildUrlGroupImages(group, numimages, page) {
+    var url =  flickrUrlBase + "flickr.groups.pools.getPhotos"+flickrUrlKey+"&group_id="+group+"&extras=views"+"&per_page="+numimages+"&page="+page+flickrUrlLast;
     return url;
   }
 
@@ -62,14 +68,17 @@
      return user;
   };
 
-  function getImages(user, numimages) {
+  function getImages(user, groupId, numimages) {
      var imageList = [];
      var pageNum = numimages / 100 + 1;
      var imageCounter = 1;
      var p;
      for(p = 0; p < pageNum; ++p) {
-     	var connectionUrl = buildUrlImages(user, 100, p+1);
-
+	if (user != "") {
+     		var connectionUrl = buildUrlImages(user, 100, p+1);
+	} else {
+     		var connectionUrl = buildUrlGroupImages(groupId, 100, p+1);
+	}
      	// grab images for the user
      	var xhr = $.ajax({
         	url: connectionUrl,
@@ -86,6 +95,7 @@
 			  entry.PhotoId = photo.id;
 			  entry.Title = photo.title;
 		 	  entry.Views = photo.views;
+                          entry.UserId = photo.owner
         		  imageList.push(entry);
 			  imageCounter++;
 			  if (imageCounter >= numimages) {
@@ -94,7 +104,7 @@
 			  }
 		      }
         	    } else {
-	              tableau.abortWithError("No results found for user: " + username);
+	              //tableau.abortWithError("No results found for user: " + username);
         	    }
 	        },
 	        error: function (xhr, ajaxOptions, thrownError) {
@@ -137,8 +147,8 @@
    
   myConnector.getColumnHeaders = function() {
     // Tell tableau about the fields and their types
-    var fieldNames = ['PhotoId', 'Title', 'Views', 'Favorites'];
-    var fieldTypes = ['string', 'string', 'int', 'int'];
+    var fieldNames = ['PhotoId', 'Title', 'Views', 'Favorites', 'UserId'];
+    var fieldTypes = ['string', 'string', 'int', 'int', 'string'];
     tableau.headersCallback(fieldNames, fieldTypes); // tell tableau about the fields and their type
   };
    
@@ -146,10 +156,15 @@
      // Call back to tableau with the table data
      var connectionData = JSON.parse(tableau.connectionData)
      var username = connectionData.username;
+     var groupId = connectionData.groupId;
      var numimages = connectionData.numpic;
 
-     var user = findUser(username);
-     var imageList = getImages(user, numimages);
+     if (username) {
+     	var user = findUser(username);
+     	var imageList = getImages(user, "", numimages);
+     } else { 
+     	var imageList = getImages("", groupId, numimages);
+     }
 
      // grab details from the images
      if (connectionData.favorites) {
@@ -174,13 +189,14 @@
   $(document).ready(function() {
     $("#submitButton").click(function() { // This event fires when a button is clicked
       var username = $('input[name=username]').val().trim();
+      var groupId = $('input[name=groupId]').val().trim();
       var numpic = $('input[name=numpic]').val().trim();
       if (numpic < 0) {
       	numpic = 1;
       }
-      var favorites = $('input[name=favorites]').prop('checked');
-      if (username) {
-        tableau.connectionData = JSON.stringify({"username": username, "numpic": numpic, "favorites": favorites});  
+      var favorites = $('#favorites').val() == 1;
+      if (username || groupId)  {
+        tableau.connectionData = JSON.stringify({"username": username, "groupId": groupId, "numpic": numpic, "favorites": favorites});  
     	tableau.connectionName = 'Flickr info: ' + username; 
         tableau.submit();
       }
@@ -197,16 +213,26 @@
 	<td><input type="text" name="username" style="width: 150px;" value="melekzek"/></td>
 </tr>
 <tr>
+        <td>Enter a groupId:</td>
+        <td><input type="text" name="groupId" style="width: 150px;" value=""/></td>
+</tr>
+<tr>
 	<td>Number of pictures:</td> 
 	<td><input type="text" name="numpic" style="width: 150px;" value="50"/><td>
 </tr>
 <tr>
-	<td>Favorites:</td>
-	<td align="left"><input type="checkbox" name="favorites" style="width: 150px;" /></td>
+<td>
+	<select id="favorites">
+  		<option value="0">Skip Favorites</option>
+  		<option value="1">Count Favorites</option>
+	</select>
+</td>
+<td>
+</td>
 </tr>
 </table>
-
 <br>
 <button type="button" id="submitButton">Get Image Data</button>
 </body
 </html>
+
